@@ -1,0 +1,170 @@
+---
+title: "NOAA Storm Database analysis for finding severe weather events. "
+output:
+  html_document:
+    keep_md: false
+---
+##Synopsis
+The Goal of this study is to explore the NOAA Storm Database and answer some questions about severe weather events in USA. We want to find out  answers about which events  are most harmful to population health and which events are most damaging to Economy.
+
+Analyzing we find that flood ,Hurricaine, tornado, storm are among the events that cause the most damage to property and Flood 2 to 3 times more damaging than any other event types.
+
+Tornado m Wind and heat has are among the  events that case most death and injury for people and most harmful for population health. Tornado is10 times more dangerous than any other event types.
+
+##Data Processing
+###Load Data
+```{r}
+library(RCurl)
+library(R.utils)
+fileUrl<-"https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+zipFile <-'repdata-data-StormData.csv.bz2'
+fileName<-'repdata-data-StormData.csv'
+#bin <- getBinaryURL(fileUrl,ssl.verifypeer=FALSE)
+#con <- file(zipFile, open = "wb")
+#writeBin(bin, con)
+#close(con)
+#bunzip2("repdata-data-StormData.csv.bz2", overwrite=T, remove=F)
+setAs("character","myDate", function(from) as.Date(from, format="%m/%d/%Y"))  
+data <- read.csv(fileName, header=TRUE,
+                 na.strings="NA",colClasses=c("BGN_DATE"="myDate")) 
+if ( nrow(data) != 902297) {
+    print("Data does not have 902297 rows as expected..Check data source!")
+}else {
+    print ("Data looks OK!")
+}
+colnames<-colnames(data)
+print(colnames)
+```
+### Finding  meanful Subset of Data for analysis.
+```{r}
+library(dplyr)
+library(lubridate)
+findPropDamage<-function(prop,propexp) {
+    inprop =as.numeric(prop)
+    inpropexp=toupper(as.character(propexp))
+    out =inprop
+    out= ifelse( is.na(propexp),inprop,
+         ifelse(inpropexp == "B",inprop*10^9,
+         ifelse(inpropexp == "M",inprop*10^6,
+         ifelse(inpropexp == "K",inprop*10^3,
+         ifelse(inpropexp == "H",inprop*10^2,
+         inprop)                  
+    ))))
+    return(out)
+}
+findHealthDamage<-function(fatalities,injuries) {
+    return(ifelse(is.na(fatalities),0,as.numeric(fatalities)) +
+               ifelse(is.na(injuries),0,as.numeric(injuries)))
+}
+
+#select appropriate columns
+storm_data<-
+    data %>%
+    mutate(EVT_YEAR=year(BGN_DATE)) %>%
+    mutate(PropertyDamage = findPropDamage(PROPDMG,PROPDMGEXP)) %>%
+    mutate(HumanAndHealthCost = findHealthDamage(FATALITIES,INJURIES)) %>%
+    select(EVT_YEAR,EVTYPE,PropertyDamage,HumanAndHealthCost,PROPDMG,PROPDMGEXP,FATALITIES,INJURIES)
+summary(storm_data$ProppertyDamage)
+#find top 25 event that cause most damage to property
+
+storm_data_top25_p<-
+    storm_data %>%
+    group_by(EVTYPE) %>%
+    summarise(TotalDamage= sum(PropertyDamage)) %>%
+    arrange(desc(TotalDamage)) %>%
+    head(25)
+
+storm_data_top25_h<-
+    storm_data %>%
+    group_by(EVTYPE) %>%
+    summarise(TotalHealthCost= sum(HumanAndHealthCost)) %>%
+    arrange(desc(TotalHealthCost)) %>%
+    head(25)
+write.table(storm_data_top25_p)
+write.table(storm_data_top25_h)
+```
+### select Event groups
+```{r}
+# Based on the above list of top 25 event we catagorize the events into groups that are similar and show up in the top 25 list
+
+
+
+eventType <- function(type) {
+    out="OTHER"
+    out =
+        ifelse(grepl("WIND",toupper(storm_data$EVTYPE)), "Wind",
+        ifelse(grepl("STORM",toupper(storm_data$EVTYPE)), "Storm",
+        ifelse(grepl("TSM",toupper(storm_data$EVTYPE)), "Storm",
+        ifelse(grepl("FLOOD",toupper(storm_data$EVTYPE)), "Flood",
+        ifelse(grepl("RAIN",toupper(storm_data$EVTYPE)), "Rain",
+        ifelse(grepl("HURRICANE",toupper(storm_data$EVTYPE)), "Hurricane",
+        ifelse(grepl("HAIL",toupper(storm_data$EVTYPE)), "Hail",
+        ifelse(grepl("TORNADO",toupper(storm_data$EVTYPE)), "Tornado",
+        ifelse(grepl("HEAT",toupper(storm_data$EVTYPE)), "Heat",
+        ifelse(grepl("FIRE",toupper(storm_data$EVTYPE)), "Fire","Others")
+    )))))))))
+    return(out)
+}
+storm_data<-
+    storm_data %>%
+    mutate(EVTYPE_E=eventType(EVTYPE))
+```
+##Results
+### Property Damage & Health Impact ( Loss of life and injuries) from various events 
+```{r}
+library(ggplot2)
+library(grid)
+library(gridExtra)
+storm_data_p <-
+  storm_data %>%
+    group_by(EVT_YEAR,EVTYPE_E) %>%
+      summarize(TotalPropDamage=sum(PropertyDamage))
+
+plot1<-ggplot(storm_data_p,aes(x=EVT_YEAR,y=TotalPropDamage,fill=factor(EVTYPE_E))) +
+    geom_bar(stat="identity") + 
+    labs(y="Total Property Damage",x= "year")
+
+storm_data_pe <-
+  storm_data %>%
+  group_by(EVTYPE_E) %>%
+  summarize(TotalPropDamage=sum(PropertyDamage)) %>%
+  arrange(desc(TotalPropDamage)) 
+
+storm_data_pe$EVTYPE_E <- factor(storm_data_pe$EVTYPE_E, levels=unique(as.character(storm_data_pe$EVTYPE_E)) )
+
+plot2<-ggplot(storm_data_pe,aes(x=EVTYPE_E,y=TotalPropDamage)) +
+    geom_bar(stat="identity") + 
+    theme(axis.text.x = element_text(angle=90, vjust=1)) +
+    labs(y="Total Property Damage",x="")
+    
+
+require(gridExtra)
+grid.arrange(plot1, plot2, nrow=2)
+
+
+storm_data_h <-
+  storm_data %>%
+    group_by(EVT_YEAR,EVTYPE_E) %>%
+      summarize(TotalHealthCost=sum(HumanAndHealthCost))
+
+plot1<-ggplot(storm_data_h,aes(x=EVT_YEAR,y=TotalHealthCost,fill=factor(EVTYPE_E))) +
+    geom_bar(stat="identity") + 
+    labs(y="#Death and Injuries",x= "Year")
+
+
+storm_data_he <-
+  storm_data %>%
+  group_by(EVTYPE_E) %>%
+  summarize(TotalHealthCost=sum(HumanAndHealthCost)) %>%
+  arrange(desc(TotalHealthCost)) 
+
+storm_data_he$EVTYPE_E <- factor(storm_data_he$EVTYPE_E, levels=unique(as.character(storm_data_he$EVTYPE_E)) )
+
+plot2<-ggplot(data=storm_data_he,aes(x=EVTYPE_E,y=TotalHealthCost)) +
+    geom_bar(stat="identity") + 
+    theme(axis.text.x = element_text(angle=90, vjust=1)) +
+    labs(y="#Death and Injuries",x="")
+require(gridExtra)
+grid.arrange(plot1, plot2, nrow=2)
+
+```
